@@ -2,7 +2,7 @@
 
 MySQL database design and implementation for the Agora academic collaboration platform.
 
-This repository contains all database work for the project — from schema design and normalization through complex queries, indexing, transactions, and a NoSQL component. The MySQL database defined here powers the live Agora application.
+This repository contains all database work for the project — from schema design and normalization through complex queries, indexing, transactions, and a NoSQL component.
 
 ---
 
@@ -10,21 +10,21 @@ This repository contains all database work for the project — from schema desig
 
 | File | Description |
 |------|-------------|
-| `schema.sql` | Complete MySQL schema — 18 tables with primary keys, foreign keys, CHECK constraints, UNIQUE constraints, and a trigger enforcing one accepted answer per problem |
-| `seed.sql` | Synthetic dataset — 350+ rows across all 18 tables for testing and demonstration |
+| `schema.sql` | Complete MySQL schema — 18 tables, primary keys, foreign keys, UNIQUE constraints, CHECK constraints, and BEFORE INSERT/UPDATE triggers enforcing business rules |
+| `seed.sql` | Synthetic dataset — ~410 rows across all 18 tables for testing and demonstration |
 | `queries.sql` | Required SQL queries — 5 SELECT, 5 JOIN, 3 GROUP BY + aggregate, 3 subqueries, 2 views, 2 relational algebra expressions |
 | `indexes.sql` | Index definitions and EXPLAIN PLAN analysis showing performance before and after indexing |
 | `transactions.sql` | Transaction demonstrations — COMMIT, ROLLBACK, SAVEPOINT, and isolation level changes |
-| `mongodb.js` | NoSQL component — MongoDB `activity_logs` collection with insert, find, filter, and aggregate queries |
-| `app.py` | Python application using `mysql-connector-python` — SELECT, INSERT, UPDATE, DELETE with prepared statements and a programmatic transaction |
+| `mongodb.js` | NoSQL component — MongoDB `activity_logs` collection with insertMany, find, filter, and aggregate queries |
+| `app.py` | Python application — SELECT, INSERT, UPDATE, DELETE with prepared statements and a programmatic transaction |
 
 ---
 
 ## Schema Overview
 
-The schema models an academic collaboration platform with 18 relational tables:
+The schema models an academic collaboration platform restricted to verified SCSU students, with 18 relational tables normalized to 3NF.
 
-**Core entities:** User, Course, Enrollment (weak entity), Tag
+**Core entities:** User, Course, Enrollment (weak entity — composite PK), Tag
 
 **Content:** Post, Problem, Answer, Resource, BorrowRequest (weak entity)
 
@@ -32,50 +32,85 @@ The schema models an academic collaboration platform with 18 relational tables:
 
 **Junctions:** PostTag, ProblemTag
 
-Key business rules enforced at the database level:
-- One enrollment per student per course — `UNIQUE(user_id, course_id)`
-- One answer per student per problem — `UNIQUE(problem_id, user_id)`
-- Only one accepted answer per problem — enforced by trigger
-- One upvote per user per content item — `UNIQUE` constraints on each upvote table
-- A user cannot follow themselves — `CHECK(follower_id != follower_id)`
-- Resource type restricted to valid academic materials — `CHECK` on `type`
+Business rules enforced at the database level:
+
+| Rule | Enforcement |
+|------|------------|
+| One enrollment per student per course | Composite `PRIMARY KEY (user_id, course_id)` on Enrollment |
+| One answer per student per problem | `UNIQUE (problem_id, user_id)` on Answer |
+| Only one accepted answer per problem | `BEFORE UPDATE` trigger on Answer |
+| One upvote per user per content item | `UNIQUE` constraints on each upvote table |
+| A user cannot follow themselves | `BEFORE INSERT` trigger on Follow |
+| A user cannot borrow their own resource | `BEFORE INSERT` trigger on BorrowRequest |
+| Resource type restricted to valid academic materials | `CHECK` constraint on Resource.type |
 
 ---
 
 ## Running the Schema
 
+**Prerequisites:** MySQL 8.0+
+
 ```bash
-# 1. Connect to MySQL
+# Connect to MySQL
 mysql -u root -p
 
-# 2. Run the schema (creates agora_db and all tables)
-source schema.sql
+# Create the database and all tables
+source /path/to/schema.sql
 
-# 3. Load seed data
-source seed.sql
+# Load synthetic seed data (~410 rows)
+source /path/to/seed.sql
 
-# 4. Run queries
-source queries.sql
+# Run all complex queries
+source /path/to/queries.sql
+
+# Run index definitions and EXPLAIN PLAN analysis
+source /path/to/indexes.sql
+
+# Run transaction demonstrations
+source /path/to/transactions.sql
+```
+
+---
+
+## MongoDB Component
+
+**Prerequisites:** MongoDB shell (`mongosh`) with a running MongoDB instance.
+
+```bash
+mongosh
+# Then inside the shell:
+load("/path/to/mongodb.js")
 ```
 
 ---
 
 ## Python Application
 
+**Prerequisites:** Python 3.8+ and `mysql-connector-python`
+
 ```bash
 pip install mysql-connector-python
+```
+
+**Run against local MySQL (defaults):**
+```bash
 python app.py
 ```
 
-Update the `DB_*` constants at the top of `app.py` to match your MySQL connection.
+**Run against a remote host (e.g., AWS RDS):**
+```bash
+DB_HOST=<rds-endpoint> DB_USER=agora_admin DB_PASS=<password> python app.py
+```
+
+All connection parameters are read from environment variables with sensible local defaults — no edits to the source file needed.
 
 ---
 
-## Organization
+## Related Repositories
 
 | Repository | Purpose |
 |-----------|---------|
-| [Agora](https://github.com/Agora-Connect/Agora) | Production Flask application powered by this database |
+| [Agora](https://github.com/Agora-Connect/Agora) | Production Flask application |
 | [database](https://github.com/Agora-Connect/database) | **This repo** — MySQL schema, queries, and all database deliverables |
 | [docs](https://github.com/Agora-Connect/docs) | Design documents, ER diagram, normalization steps |
 
