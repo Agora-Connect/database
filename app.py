@@ -7,19 +7,29 @@ Requirements:
     pip install mysql-connector-python
 
 Usage:
+    # Local MySQL
     python app.py
 
-Set the DB_* constants below to match your MySQL connection.
+    # Against RDS (or any remote host)
+    DB_HOST=<rds-endpoint> DB_USER=agora_admin DB_PASS=<password> python app.py
+
+Environment variables (all optional — defaults shown):
+    DB_HOST   localhost
+    DB_PORT   3306
+    DB_NAME   agora_db
+    DB_USER   root
+    DB_PASS   (empty)
 """
 
+import os
 import mysql.connector
 from mysql.connector import Error
 
-DB_HOST = "localhost"
-DB_PORT = 3306
-DB_NAME = "agora_db"
-DB_USER = "root"
-DB_PASS = ""
+DB_HOST = os.environ.get("DB_HOST", "localhost")
+DB_PORT = int(os.environ.get("DB_PORT", 3306))
+DB_NAME = os.environ.get("DB_NAME", "agora_db")
+DB_USER = os.environ.get("DB_USER", "root")
+DB_PASS = os.environ.get("DB_PASS", "")
 
 
 def connect():
@@ -67,8 +77,8 @@ def select_problems_for_course(conn, course_id):
     sql = """
         SELECT pr.problem_id,
                pr.title,
-               COUNT(a.answer_id) AS answer_count,
-               MAX(a.is_accepted) AS has_accepted
+               COUNT(a.answer_id)  AS answer_count,
+               MAX(a.is_accepted)  AS has_accepted
         FROM Problem pr
         LEFT JOIN Answer a ON pr.problem_id = a.problem_id
         WHERE pr.course_id = %s
@@ -129,15 +139,15 @@ def delete_user(conn, user_id):
 
 
 # ------------------------------------------------------------------
-# TRANSACTION: enroll a user in a course atomically
-# Inserts the enrollment and logs a summary; rolls back on error.
+# TRANSACTION: enroll a user in a course atomically.
+# Inserts the enrollment and verifies the course exists first.
+# Rolls back on any error, including duplicate enrollment attempts.
 # ------------------------------------------------------------------
 def enroll_user(conn, user_id, course_id):
     cursor = conn.cursor()
     try:
         conn.start_transaction()
 
-        # Check the course exists
         cursor.execute(
             "SELECT name FROM Course WHERE course_id = %s",
             (course_id,)
@@ -146,7 +156,6 @@ def enroll_user(conn, user_id, course_id):
         if not course:
             raise ValueError(f"course_id={course_id} does not exist")
 
-        # Insert enrollment
         cursor.execute(
             "INSERT INTO Enrollment (user_id, course_id) VALUES (%s, %s)",
             (user_id, course_id)
@@ -170,27 +179,27 @@ def enroll_user(conn, user_id, course_id):
 def main():
     try:
         conn = connect()
-        print(f"Connected to {DB_NAME} on {DB_HOST}")
+        print(f"Connected to '{DB_NAME}' on {DB_HOST}:{DB_PORT}")
 
         select_top_users(conn)
         select_problems_for_course(conn, course_id=2)
 
-        new_user_id = insert_user(
+        new_id = insert_user(
             conn,
             email="demo.student@stcloudstate.edu",
             name="Demo Student",
             university="Saint Cloud State University"
         )
 
-        update_reputation(conn, user_id=new_user_id, points=25)
+        update_reputation(conn, user_id=new_id, points=25)
 
-        # Enroll the new user in Database Systems (course_id = 2)
-        enroll_user(conn, user_id=new_user_id, course_id=2)
+        # Enroll in Database Systems (course_id = 2)
+        enroll_user(conn, user_id=new_id, course_id=2)
 
-        # Attempt a duplicate enrollment to show rollback behavior
-        enroll_user(conn, user_id=new_user_id, course_id=2)
+        # Attempt duplicate enrollment to show rollback
+        enroll_user(conn, user_id=new_id, course_id=2)
 
-        delete_user(conn, user_id=new_user_id)
+        delete_user(conn, user_id=new_id)
 
         conn.close()
         print("\nDone.")
