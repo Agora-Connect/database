@@ -33,18 +33,18 @@ CREATE TABLE Course (
     CONSTRAINT uq_course_code UNIQUE      (code)
 );
 
--- Weak entity: ties a user to a course; no meaning without both
+-- Weak entity: existence depends entirely on User and Course.
+-- No surrogate key — identity is the composite (user_id, course_id).
+-- Deleted automatically when either parent is deleted (CASCADE).
 CREATE TABLE Enrollment (
-    enrollment_id INT       NOT NULL AUTO_INCREMENT,
-    user_id       INT       NOT NULL,
-    course_id     INT       NOT NULL,
-    enrolled_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    user_id     INT       NOT NULL,
+    course_id   INT       NOT NULL,
+    enrolled_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT pk_enrollment             PRIMARY KEY (enrollment_id),
-    CONSTRAINT uq_enrollment_user_course UNIQUE      (user_id, course_id),
-    CONSTRAINT fk_enrollment_user        FOREIGN KEY (user_id)
-        REFERENCES User(user_id)   ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT fk_enrollment_course      FOREIGN KEY (course_id)
+    CONSTRAINT pk_enrollment        PRIMARY KEY (user_id, course_id),
+    CONSTRAINT fk_enrollment_user   FOREIGN KEY (user_id)
+        REFERENCES User(user_id)     ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_enrollment_course FOREIGN KEY (course_id)
         REFERENCES Course(course_id) ON DELETE CASCADE ON UPDATE CASCADE
 );
 
@@ -217,7 +217,9 @@ CREATE TABLE UpvoteOnAnswer (
         REFERENCES User(user_id)     ON DELETE CASCADE ON UPDATE CASCADE
 );
 
--- Self-referential social graph; a user cannot follow themselves
+-- Self-referential social graph; a user cannot follow themselves.
+-- The no-self-follow rule is enforced by a trigger (not a CHECK constraint)
+-- because MySQL 9+ prohibits CHECK constraints on FK columns with CASCADE actions.
 CREATE TABLE Follow (
     follow_id   INT       NOT NULL AUTO_INCREMENT,
     follower_id INT       NOT NULL,
@@ -226,12 +228,24 @@ CREATE TABLE Follow (
 
     CONSTRAINT pk_follow          PRIMARY KEY (follow_id),
     CONSTRAINT uq_follow_pair     UNIQUE      (follower_id, followed_id),
-    CONSTRAINT chk_follow_no_self CHECK       (follower_id != followed_id),
     CONSTRAINT fk_follow_follower FOREIGN KEY (follower_id)
         REFERENCES User(user_id) ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT fk_follow_followed FOREIGN KEY (followed_id)
         REFERENCES User(user_id) ON DELETE CASCADE ON UPDATE CASCADE
 );
+
+-- Trigger: prevents a user from following themselves
+DELIMITER $$
+CREATE TRIGGER trg_no_self_follow
+BEFORE INSERT ON Follow
+FOR EACH ROW
+BEGIN
+    IF NEW.follower_id = NEW.followed_id THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'A user cannot follow themselves.';
+    END IF;
+END$$
+DELIMITER ;
 
 -- Shared academic materials; assignment and syllabus sharing not permitted
 CREATE TABLE Resource (
@@ -251,7 +265,8 @@ CREATE TABLE Resource (
         REFERENCES Course(course_id) ON DELETE RESTRICT ON UPDATE CASCADE
 );
 
--- Weak entity: borrow/lend lifecycle for a resource; deleted when resource is deleted
+-- Weak entity: borrow/lend lifecycle for a resource; deleted when resource is deleted.
+-- The no-self-borrow rule is enforced by a trigger for the same reason as Follow.
 CREATE TABLE BorrowRequest (
     request_id   INT         NOT NULL AUTO_INCREMENT,
     resource_id  INT         NOT NULL,
@@ -263,7 +278,6 @@ CREATE TABLE BorrowRequest (
 
     CONSTRAINT pk_borrow_request   PRIMARY KEY (request_id),
     CONSTRAINT chk_borrow_status   CHECK       (status IN ('pending', 'approved', 'returned', 'declined')),
-    CONSTRAINT chk_borrow_no_self  CHECK       (requester_id != owner_id),
     CONSTRAINT fk_borrow_resource  FOREIGN KEY (resource_id)
         REFERENCES Resource(resource_id) ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT fk_borrow_requester FOREIGN KEY (requester_id)
@@ -271,6 +285,19 @@ CREATE TABLE BorrowRequest (
     CONSTRAINT fk_borrow_owner     FOREIGN KEY (owner_id)
         REFERENCES User(user_id)         ON DELETE RESTRICT ON UPDATE CASCADE
 );
+
+-- Trigger: prevents a user from requesting to borrow their own resource
+DELIMITER $$
+CREATE TRIGGER trg_no_self_borrow
+BEFORE INSERT ON BorrowRequest
+FOR EACH ROW
+BEGIN
+    IF NEW.requester_id = NEW.owner_id THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'A user cannot borrow their own resource.';
+    END IF;
+END$$
+DELIMITER ;
 
 -- Many-to-many: posts and tags
 CREATE TABLE PostTag (
